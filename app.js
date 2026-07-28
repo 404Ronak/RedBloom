@@ -1,11 +1,20 @@
-* ===========================================================
-   FLOWER BLOOM — Real-time Hand Gesture Flower Controller
+/* ===========================================================
+   GROWN FOR YOU — Hand Gesture Garden
    ===========================================================
-   Uses MediaPipe Hands to track hand gestures and render a
-   procedural glowing flower that blooms, grows, and sways
-   with wind — all on a Canvas overlay atop the webcam feed.
+   A peony-style flower that opens in layered rings and grows
+   a stem, controlled by pinch gestures tracked with MediaPipe
+   Hands. A vine-shaped rail traces the whole journey, and a
+   quiet love note appears once the flower is in full bloom.
    =========================================================== */
- 
+
+// -------------------------------------------------------------
+// Personalize this before you deploy — no code-diving required.
+// -------------------------------------------------------------
+const CONFIG = {
+    loveNote: "Every flower here grew because of you. Same goes for us.",
+    reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+};
+
 // =============================================================
 // NOISE — Organic movement via layered sine waves
 // =============================================================
@@ -13,8 +22,6 @@ class OrganicNoise {
     constructor() {
         this.seeds = Array.from({ length: 8 }, () => Math.random() * 1000);
     }
- 
-    /** Returns a value roughly in [-1, 1] */
     get(t, channel = 0) {
         const s = this.seeds[channel % this.seeds.length];
         return (
@@ -25,9 +32,9 @@ class OrganicNoise {
         );
     }
 }
- 
+
 // =============================================================
-// PARTICLE — Floating pollen / sparkle
+// PARTICLE — Floating warm pollen / dust motes
 // =============================================================
 class Particle {
     constructor(cw, ch) {
@@ -35,197 +42,277 @@ class Particle {
         this.ch = ch;
         this.reset(true);
     }
- 
+
     reset(initial = false) {
         this.x = Math.random() * this.cw;
         this.y = initial ? Math.random() * this.ch : this.ch + Math.random() * 40;
-        this.radius = Math.random() * 2.5 + 0.5;
-        this.vx = (Math.random() - 0.5) * 0.3;
-        this.vy = -(Math.random() * 0.6 + 0.15);
-        this.life = Math.random() * 300 + 150;
+        this.radius = Math.random() * 2 + 0.5;
+        this.vx = (Math.random() - 0.5) * 0.25;
+        this.vy = -(Math.random() * 0.5 + 0.12);
+        this.life = Math.random() * 320 + 180;
         this.maxLife = this.life;
-        this.hue = 330 + Math.random() * 40;          // pink-ish
-        this.brightness = 70 + Math.random() * 20;
+        // Warm gold-to-rose range instead of hot pink
+        this.hue = 24 + Math.random() * 20;
+        this.sat = 70 + Math.random() * 15;
+        this.brightness = 65 + Math.random() * 20;
         this.flickerPhase = Math.random() * Math.PI * 2;
     }
- 
+
     update(windForce, dt) {
-        this.x += this.vx + windForce * 1.8;
+        this.x += this.vx + windForce * 1.6;
         this.y += this.vy;
         this.life -= dt;
         if (this.life <= 0 || this.y < -20 || this.x < -20 || this.x > this.cw + 20) {
             this.reset();
         }
     }
- 
+
     draw(ctx) {
         const t = this.life / this.maxLife;
-        const flicker = 0.5 + 0.5 * Math.sin(this.life * 0.08 + this.flickerPhase);
-        const alpha = t * 0.75 * flicker;
+        const flicker = 0.5 + 0.5 * Math.sin(this.life * 0.07 + this.flickerPhase);
+        const alpha = t * 0.6 * flicker;
         if (alpha < 0.02) return;
- 
+
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = `hsla(${this.hue}, 100%, ${this.brightness}%, 0.8)`;
-        ctx.fillStyle = `hsla(${this.hue}, 90%, ${this.brightness}%, 1)`;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = `hsla(${this.hue}, ${this.sat}%, ${this.brightness}%, 0.7)`;
+        ctx.fillStyle = `hsla(${this.hue}, ${this.sat}%, ${this.brightness}%, 1)`;
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
     }
 }
- 
+
+// =============================================================
+// SOUND — a few soft ambient tones on bloom milestones
+// =============================================================
+class SoundEngine {
+    constructor() {
+        this.ctx = null;
+        this.enabled = true;
+        this.lastMilestone = -1;
+        this.milestones = [0.25, 0.5, 0.75, 0.98];
+        // Pentatonic-ish, gentle intervals so overlapping notes stay consonant
+        this.notes = [329.63, 392.0, 440.0, 587.33]; // E4, G4, A4, D5
+    }
+
+    ensureContext() {
+        if (!this.ctx) {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) this.ctx = new AC();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+    }
+
+    playTone(freq) {
+        if (!this.enabled || !this.ctx) return;
+        const t0 = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, t0);
+        gain.gain.linearRampToValueAtTime(0.06, t0 + 0.4);
+        gain.gain.linearRampToValueAtTime(0, t0 + 2.6);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + 2.7);
+    }
+
+    onBloomUpdate(bloom) {
+        for (let i = 0; i < this.milestones.length; i++) {
+            if (bloom >= this.milestones[i] && this.lastMilestone < i) {
+                this.playTone(this.notes[i]);
+                this.lastMilestone = i;
+            }
+        }
+        if (bloom < 0.05) this.lastMilestone = -1; // reset after full close
+    }
+
+    toggle() {
+        this.enabled = !this.enabled;
+        return this.enabled;
+    }
+}
+
 // =============================================================
 // MAIN APPLICATION
 // =============================================================
-class FlowerBloomApp {
+class GardenApp {
     constructor() {
         // DOM
         this.canvas = document.getElementById('canvas');
         this.ctx = this.canvas.getContext('2d');
         this.video = document.getElementById('webcam');
+        this.veilEl = document.getElementById('veil');
+        this.beginBtn = document.getElementById('begin-btn');
+        this.veilHint = document.getElementById('veil-hint');
         this.loadingEl = document.getElementById('loading');
-        this.instructionsEl = document.getElementById('instructions');
- 
-        // Noise
+        this.vineRailEl = document.getElementById('vine-rail');
+        this.vineFillEl = document.getElementById('vine-fill');
+        this.controlsEl = document.getElementById('controls');
+        this.soundToggleBtn = document.getElementById('sound-toggle');
+        this.soundIcon = document.getElementById('sound-icon');
+        this.statBloomEl = document.getElementById('stat-bloom');
+        this.statGrowEl = document.getElementById('stat-grow');
+        this.hintLeftEl = document.getElementById('hint-left');
+        this.hintRightEl = document.getElementById('hint-right');
+        this.revealEl = document.getElementById('reveal');
+        this.revealNoteEl = document.getElementById('reveal-note');
+        this.saveBtn = document.getElementById('save-btn');
+        this.closeRevealBtn = document.getElementById('close-reveal-btn');
+
+        this.revealNoteEl.textContent = CONFIG.loveNote;
+
+        // Noise & sound
         this.noise = new OrganicNoise();
- 
+        this.sound = new SoundEngine();
+
         // Time
         this.time = 0;
         this.lastTimestamp = 0;
- 
-        // Gesture state (smoothed values)
+
+        // Gesture state (smoothed)
         this.bloom = 0;
         this.growth = 0;
         this.windForce = 0;
- 
-        // Gesture targets (raw from detection)
+
+        // Gesture targets (raw)
         this.targetBloom = 0;
         this.targetGrowth = 0;
         this.targetWindForce = 0;
- 
-        // Previous hand X per-hand, used for velocity-based wind.
-        // Tracked separately per handedness so switching/losing hands
-        // between frames never produces a spurious jump.
+
+        // Previous hand X, tracked per-hand so losing/regaining a hand
+        // between frames never produces a fake velocity spike.
         this.prevHandX = { Left: null, Right: null };
- 
-        // Hand landmarks (updated each frame by MediaPipe)
+
+        // Hand landmarks
         this.handLandmarks = [];
         this.handHandedness = [];
         this.handsDetected = 0;
- 
+
         // Particles
         this.particles = [];
- 
-        // Setup
+        this.particleCount = CONFIG.reducedMotion ? 24 : 55;
+
+        // Full-bloom reveal tracking
+        this.fullBloomTimer = 0;
+        this.revealShown = false;
+        this.revealDismissed = false;
+
+        // Vine rail geometry
+        this.vinePathLength = 900; // matches stroke-dasharray in the SVG
+
         this.resize();
         window.addEventListener('resize', () => this.resize());
- 
         this.initParticles();
+        this.bindUI();
+    }
+
+    // ---------------------------------------------------------
+    // UI wiring
+    // ---------------------------------------------------------
+    bindUI() {
+        this.beginBtn.addEventListener('click', () => this.begin());
+
+        this.soundToggleBtn.addEventListener('click', () => {
+            const enabled = this.sound.toggle();
+            this.soundIcon.textContent = enabled ? '♪' : '✕';
+            this.soundToggleBtn.setAttribute('aria-pressed', String(enabled));
+        });
+
+        this.saveBtn.addEventListener('click', () => this.saveSnapshot());
+        this.closeRevealBtn.addEventListener('click', () => {
+            this.revealEl.classList.add('hidden');
+            this.revealDismissed = true;
+        });
+    }
+
+    // Camera + audio permission are requested from this direct click,
+    // which keeps the browser's permission prompt reliable (some
+    // browsers suppress prompts that aren't tied to a user gesture).
+    begin() {
+        this.sound.ensureContext();
+        this.veilEl.classList.add('hidden');
+        this.loadingEl.classList.remove('hidden');
         this.initHandTracking();
- 
-        // Hide instructions after 8 seconds
-        setTimeout(() => {
-            this.instructionsEl?.classList.add('hidden');
-        }, 8000);
- 
-        // Kick off render
         requestAnimationFrame((ts) => this.animate(ts));
     }
- 
+
     // ---------------------------------------------------------
     // Setup
     // ---------------------------------------------------------
     resize() {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
- 
-        // Re-bound particles
         for (const p of this.particles) {
             p.cw = this.canvas.width;
             p.ch = this.canvas.height;
         }
     }
- 
+
     initParticles() {
-        const count = 60;
-        for (let i = 0; i < count; i++) {
+        for (let i = 0; i < this.particleCount; i++) {
             this.particles.push(new Particle(this.canvas.width, this.canvas.height));
         }
     }
- 
+
     initHandTracking() {
         const hands = new Hands({
-            locateFile: (file) =>
-                `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`,
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`,
         });
- 
+
         hands.setOptions({
             maxNumHands: 2,
             modelComplexity: 1,
             minDetectionConfidence: 0.65,
             minTrackingConfidence: 0.5,
         });
- 
+
         hands.onResults((r) => this.onHandResults(r));
- 
+
         const cam = new Camera(this.video, {
-            onFrame: async () => {
-                await hands.send({ image: this.video });
-            },
+            onFrame: async () => { await hands.send({ image: this.video }); },
             width: 1280,
             height: 720,
         });
- 
+
         cam.start().then(() => {
-            setTimeout(() => this.loadingEl?.classList.add('hidden'), 600);
+            this.loadingEl.classList.add('hidden');
+            this.vineRailEl.classList.remove('hidden');
+            this.controlsEl.classList.remove('hidden');
         }).catch((err) => {
             console.error('Camera failed to start:', err);
-            if (this.loadingEl) {
-                const sub = this.loadingEl.querySelector('.loading-subtext');
-                if (sub) sub.textContent = 'Camera access denied or unavailable — please allow it and reload.';
-            }
+            this.loadingEl.innerHTML =
+                '<div class="loading-text">Camera access was blocked.<br>Allow it in your browser\'s address bar, then reload.</div>';
         });
     }
- 
+
     // ---------------------------------------------------------
-    // Hand results callback
+    // Hand results
     // ---------------------------------------------------------
     onHandResults(results) {
         this.handLandmarks = results.multiHandLandmarks || [];
         this.handHandedness = results.multiHandedness || [];
         this.handsDetected = this.handLandmarks.length;
- 
-        let leftPinch = 0;
-        let rightPinch = 0;
-        let hasLeft = false;
-        let hasRight = false;
- 
-        // Accumulate wind contributions from each hand this frame,
-        // then average — instead of overwriting a single shared
-        // "previous X" value across both hands.
-        let windSum = 0;
-        let windCount = 0;
- 
+
+        let leftPinch = 0, rightPinch = 0, hasLeft = false, hasRight = false;
+        let windSum = 0, windCount = 0;
+
         if (this.handsDetected > 0) {
             for (let i = 0; i < this.handsDetected; i++) {
                 const hand = this.handLandmarks[i];
                 const handedness = this.handHandedness[i];
-                // MediaPipe handedness label is 'Left' or 'Right'
                 const label = handedness && handedness.label === 'Left' ? 'Left' : 'Right';
                 const isLeft = label === 'Left';
                 const pinch = this.calcPinchDistance(hand);
- 
-                if (isLeft) {
-                    leftPinch = pinch;
-                    hasLeft = true;
-                } else {
-                    rightPinch = pinch;
-                    hasRight = true;
-                }
- 
-                // Wind from hand horizontal velocity, tracked per-hand
+
+                if (isLeft) { leftPinch = pinch; hasLeft = true; }
+                else { rightPinch = pinch; hasRight = true; }
+
                 const c = this.palmCenter(hand);
                 const prevX = this.prevHandX[label];
                 if (prevX !== null) {
@@ -234,622 +321,428 @@ class FlowerBloomApp {
                 }
                 this.prevHandX[label] = c.x;
             }
- 
-            if (windCount > 0) {
-                this.targetWindForce = (windSum / windCount) * 12;
-            }
- 
-            // Left hand controls Bloom, Right hand controls Growth.
-            // calcPinchDistance() returns 0 when fingers are touching
-            // and 1 when fully spread, so invert it: pinching CLOSED
-            // (matching the on-screen instructions) drives the value
-            // toward 1 (full bloom / full growth).
+
+            if (windCount > 0) this.targetWindForce = (windSum / windCount) * 12;
+
+            // Pinch distance is 0 when fingers touch, 1 when spread — invert
+            // so a closed pinch (matching the on-screen instructions) drives
+            // bloom/growth up.
             this.targetBloom = hasLeft ? (1 - leftPinch) : 0;
             this.targetGrowth = hasRight ? (1 - rightPinch) : 0;
- 
-            // Reset stale tracking for any hand that's no longer visible,
-            // so it doesn't cause a fake velocity spike if it reappears.
+
             if (!hasLeft) this.prevHandX.Left = null;
             if (!hasRight) this.prevHandX.Right = null;
+
+            this.hintLeftEl.classList.toggle('hidden', !hasLeft);
+            this.hintRightEl.classList.toggle('hidden', !hasRight);
         } else {
-            // No hands → slowly close and shrink back to 0
             this.targetBloom *= 0.94;
             this.targetGrowth *= 0.94;
             this.targetWindForce *= 0.9;
             this.prevHandX.Left = null;
             this.prevHandX.Right = null;
+            this.hintLeftEl.classList.add('hidden');
+            this.hintRightEl.classList.add('hidden');
         }
     }
- 
-    /**
-     * Pinch distance: distance between thumb tip (4) and index fingertip (8),
-     * normalized by hand size so it works at any distance from the camera.
-     * Returns 0 (pinched/touching) → 1 (fully spread).
-     */
+
+    /** 0 (pinched/touching) → 1 (fully spread), normalized by hand size */
     calcPinchDistance(lm) {
-        const thumb = lm[4];   // thumb tip
-        const index = lm[8];   // index fingertip
+        const thumb = lm[4];
+        const index = lm[8];
         const wrist = lm[0];
-        const mcp = lm[9];     // middle-finger MCP
- 
-        // Reference = wrist-to-MCP distance (scales with hand size in frame)
+        const mcp = lm[9];
         const ref = Math.hypot(mcp.x - wrist.x, mcp.y - wrist.y);
         if (ref < 0.01) return 0;
- 
         const dist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
-        // Normalize: pinch ~0 when touching, ~1 when spread wide
         return Math.min(1, Math.max(0, (dist / ref - 0.15) * 1.6));
     }
- 
-    /** Rough palm center (average of wrist + MCP joints) */
+
     palmCenter(lm) {
         const ids = [0, 5, 9, 13, 17];
         let x = 0, y = 0;
         for (const i of ids) { x += lm[i].x; y += lm[i].y; }
         return { x: x / ids.length, y: y / ids.length };
     }
- 
+
     // =============================================================
     // RENDERING
     // =============================================================
- 
-    // ----- Hand Skeleton -----
-    drawHandSkeleton(lm, handedness) {
-        const ctx = this.ctx;
-        const cw = this.canvas.width;
-        const ch = this.canvas.height;
- 
-        // Draw guide line between thumb tip (4) and index fingertip (8)
-        const thumbTip = lm[4];
-        const indexTip = lm[8];
-        if (thumbTip && indexTip) {
-            const tx = thumbTip.x * cw;
-            const ty = thumbTip.y * ch;
-            const ix = indexTip.x * cw;
-            const iy = indexTip.y * ch;
- 
-            const isLeft = handedness && handedness.label === 'Left';
-            const labelText = isLeft ? '✿ Left Hand: Bloom' : '🌱 Right Hand: Grow';
-            const glowColor = isLeft ? 'rgba(255, 80, 130, 0.85)' : 'rgba(56, 193, 114, 0.85)';
-            const strokeStyle = isLeft ? '#ff5082' : '#38c172';
- 
-            ctx.save();
-            ctx.setLineDash([4, 4]);
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = strokeStyle;
-            ctx.shadowBlur = 8;
-            ctx.shadowColor = glowColor;
-            ctx.beginPath();
-            ctx.moveTo(tx, ty);
-            ctx.lineTo(ix, iy);
-            ctx.stroke();
-            ctx.restore();
- 
-            // Draw glowing circles at thumb and index tips
-            ctx.save();
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = glowColor;
-            ctx.fillStyle = strokeStyle;
-            ctx.beginPath();
-            ctx.arc(tx, ty, 6, 0, Math.PI * 2);
-            ctx.arc(ix, iy, 6, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
- 
-            // Draw unmirrored text label at the midpoint
-            const midX = (tx + ix) / 2;
-            const midY = (ty + iy) / 2;
- 
-            ctx.save();
-            // Counter-flip coordinates on X around the canvas center to make text unmirrored
-            ctx.translate(cw, 0);
-            ctx.scale(-1, 1);
- 
-            ctx.font = 'bold 12px Inter, sans-serif';
-            const textWidth = ctx.measureText(labelText).width;
-            const paddingX = 10;
-            const paddingY = 6;
-            const pillWidth = textWidth + paddingX * 2;
-            const pillHeight = 22;
- 
-            const drawX = cw - midX;
-            const drawY = midY - 20; // draw slightly above the midpoint
- 
-            // Draw background pill
-            ctx.fillStyle = 'rgba(10, 5, 20, 0.8)';
-            ctx.strokeStyle = strokeStyle;
-            ctx.lineWidth = 1;
-            ctx.shadowBlur = 6;
-            ctx.shadowColor = glowColor;
-            ctx.beginPath();
-            ctx.roundRect(drawX - pillWidth / 2, drawY - pillHeight / 2, pillWidth, pillHeight, 6);
-            ctx.fill();
-            ctx.stroke();
- 
-            // Draw text
-            ctx.fillStyle = '#ffffff';
-            ctx.shadowBlur = 0;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(labelText, drawX, drawY);
- 
-            ctx.restore();
-        }
-    }
- 
-    // ----- Stem -----
+
     drawStem(baseX, baseY, height, windAngle) {
         const ctx = this.ctx;
         const segs = 24;
         const segH = height / segs;
- 
-        // Build stem path points
         const pts = [{ x: baseX, y: baseY }];
+
         for (let i = 1; i <= segs; i++) {
             const t = i / segs;
             const windBend = windAngle * t * t * 40;
-            const sway = this.noise.get(this.time * 0.6 + i * 0.25, 0) * 10 * t;
-            pts.push({
-                x: baseX + windBend + sway,
-                y: baseY - segH * i,
-            });
+            const sway = this.noise.get(this.time * 0.55 + i * 0.25, 0) * 9 * t;
+            pts.push({ x: baseX + windBend + sway, y: baseY - segH * i });
         }
- 
-        // Draw stem (thick gradient line)
+
         ctx.save();
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
- 
-        // Outer glow
+
         ctx.lineWidth = 6;
-        ctx.strokeStyle = 'rgba(40, 120, 35, 0.25)';
+        ctx.strokeStyle = 'rgba(127, 166, 107, 0.2)';
         ctx.shadowBlur = 8;
-        ctx.shadowColor = 'rgba(80, 180, 60, 0.3)';
+        ctx.shadowColor = 'rgba(127, 166, 107, 0.25)';
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
- 
-        // Core stem
-        ctx.lineWidth = 3.5;
-        ctx.strokeStyle = '#3a8a30';
+
+        ctx.lineWidth = 3.2;
+        ctx.strokeStyle = '#4d7a3f';
         ctx.shadowBlur = 0;
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
- 
-        // Leaves
+
         this.drawLeaves(pts);
- 
         ctx.restore();
- 
+
         return { tip: pts[pts.length - 1], pts };
     }
- 
+
     drawLeaves(stemPts) {
         const ctx = this.ctx;
-        const positions = [0.25, 0.45, 0.65];
- 
+        const positions = [0.28, 0.5, 0.7];
+
         for (let li = 0; li < positions.length; li++) {
             const idx = Math.floor(positions[li] * (stemPts.length - 1));
             const pt = stemPts[idx];
             const side = li % 2 === 0 ? 1 : -1;
-            const len = 22 + this.growth * 18;
-            const angle = side * (0.45 + this.noise.get(this.time * 0.6 + li * 3, 2) * 0.2);
- 
+            const len = 20 + this.growth * 16;
+            const angle = side * (0.45 + this.noise.get(this.time * 0.55 + li * 3, 2) * 0.2);
+
             ctx.save();
             ctx.translate(pt.x, pt.y);
             ctx.rotate(angle);
- 
             const grad = ctx.createLinearGradient(0, 0, len, 0);
-            grad.addColorStop(0, 'rgba(55, 140, 45, 0.8)');
-            grad.addColorStop(1, 'rgba(75, 170, 60, 0.4)');
+            grad.addColorStop(0, 'rgba(77, 122, 63, 0.85)');
+            grad.addColorStop(1, 'rgba(127, 166, 107, 0.4)');
             ctx.fillStyle = grad;
             ctx.shadowBlur = 4;
-            ctx.shadowColor = 'rgba(80, 200, 60, 0.25)';
- 
+            ctx.shadowColor = 'rgba(127, 166, 107, 0.2)';
             ctx.beginPath();
             ctx.moveTo(0, 0);
-            ctx.quadraticCurveTo(len * 0.5, -10, len, -1);
-            ctx.quadraticCurveTo(len * 0.5, 10, 0, 0);
+            ctx.quadraticCurveTo(len * 0.5, -9, len, -1);
+            ctx.quadraticCurveTo(len * 0.5, 9, 0, 0);
             ctx.fill();
- 
-            // Leaf vein
-            ctx.strokeStyle = 'rgba(90, 180, 70, 0.3)';
-            ctx.lineWidth = 0.8;
-            ctx.beginPath();
-            ctx.moveTo(3, 0);
-            ctx.lineTo(len * 0.8, 0);
-            ctx.stroke();
- 
             ctx.restore();
         }
     }
- 
-    // ----- Flower Head (Tulip facing upward) -----
+
+    /**
+     * Peony-style head: concentric rings of petals opening around a
+     * full circle (rather than a single upward tulip shape), with
+     * outer rings opening before inner ones for a layered bloom.
+     */
     drawFlowerHead(cx, cy, bloom, windAngle, scale) {
-        // Boost scale as it blooms to make it feel more dynamic and organic
-        const bloomScaleFactor = 1.0 + bloom * 0.18;
-        const adjustedScale = scale * bloomScaleFactor;
         const ctx = this.ctx;
- 
         ctx.save();
         ctx.translate(cx, cy);
- 
-        // --- Ambient glow behind flower ---
-        const glowR = (60 + bloom * 120) * adjustedScale;
+
+        // Ambient glow
+        const glowR = (55 + bloom * 130) * scale;
         if (bloom > 0.02) {
-            const glow = ctx.createRadialGradient(0, -glowR * 0.4, 0, 0, -glowR * 0.4, glowR);
-            glow.addColorStop(0, `rgba(255, 80, 130, ${0.4 * bloom})`);
-            glow.addColorStop(0.5, `rgba(255, 50, 100, ${0.2 * bloom})`);
-            glow.addColorStop(1, 'rgba(255, 30, 70, 0)');
+            const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
+            glow.addColorStop(0, `rgba(232, 160, 180, ${0.35 * bloom})`);
+            glow.addColorStop(0.55, `rgba(232, 196, 104, ${0.14 * bloom})`);
+            glow.addColorStop(1, 'rgba(232, 160, 180, 0)');
             ctx.fillStyle = glow;
             ctx.beginPath();
-            ctx.arc(0, -glowR * 0.4, glowR, 0, Math.PI * 2);
+            ctx.arc(0, 0, glowR, 0, Math.PI * 2);
             ctx.fill();
         }
- 
-        // Base color definitions (tulip uses beautiful pink/coral/yellow tones)
-        const hue = 345; // Pink/crimson base
-        const sat = 85;
-        const light = 55;
- 
-        // --- Tulip Petal Layers ---
-        // Back/outer layer (drawn first)
-        const backPetals = [
-            { angle: 0, lengthMul: 1.0, widthMul: 0.4, hueOffset: 0, lightOffset: -4 },
-            { angle: -0.15 - bloom * 0.7, lengthMul: 0.95, widthMul: 0.38, hueOffset: 10, lightOffset: -2 },
-            { angle: 0.15 + bloom * 0.7, lengthMul: 0.95, widthMul: 0.38, hueOffset: 10, lightOffset: -2 }
-        ];
- 
-        // Front/inner layer (drawn on top)
-        const frontPetals = [
-            { angle: -0.05 - bloom * 0.55, lengthMul: 0.9, widthMul: 0.35, hueOffset: 5, lightOffset: 2 },
-            { angle: 0.05 + bloom * 0.55, lengthMul: 0.9, widthMul: 0.35, hueOffset: 5, lightOffset: 2 },
-            { angle: 0, lengthMul: 0.85, widthMul: 0.32, hueOffset: -5, lightOffset: 5 }
-        ];
- 
-        const maxPetalLen = 85 * adjustedScale;
- 
-        // Draw back petals
-        for (const p of backPetals) {
-            const flutter = this.noise.get(this.time * 1.2 + p.angle * 10, 3) * 0.04 * (1 + bloom);
-            const finalAngle = p.angle + flutter + windAngle * 0.1;
-            const len = maxPetalLen * p.lengthMul;
-            const wid = maxPetalLen * p.widthMul * (0.6 + bloom * 0.8);
- 
-            this.drawTulipPetal(ctx, finalAngle, len, wid, hue + p.hueOffset, sat, light + p.lightOffset, bloom);
-        }
- 
-        // Draw center details (stamen/pistil) if open
-        if (bloom > 0.15) {
+
+        // Unopened bud, fades out as petals take over
+        if (bloom < 0.35) {
+            const budAlpha = 1 - bloom / 0.35;
+            const budR = 14 * scale;
             ctx.save();
-            ctx.shadowBlur = 0;
-            // Center pistil (greenish yellow)
-            ctx.fillStyle = `rgba(180, 220, 100, ${bloom})`;
+            ctx.globalAlpha = budAlpha;
+            const bg = ctx.createRadialGradient(0, -budR * 0.3, 0, 0, 0, budR);
+            bg.addColorStop(0, 'rgba(200, 130, 150, 0.9)');
+            bg.addColorStop(1, 'rgba(120, 70, 90, 0.9)');
+            ctx.fillStyle = bg;
             ctx.beginPath();
-            ctx.arc(0, -maxPetalLen * 0.2, 5 * adjustedScale, 0, Math.PI * 2);
+            ctx.ellipse(0, 0, budR * 0.75, budR, 0, 0, Math.PI * 2);
             ctx.fill();
- 
-            // Stamens around pistil
-            const stamenCount = 4;
-            for (let i = 0; i < stamenCount; i++) {
-                const a = (i / stamenCount) * Math.PI * 2 + this.time * 0.5;
-                const r = 8 * adjustedScale * bloom;
-                const sx = Math.cos(a) * r;
-                const sy = -maxPetalLen * 0.2 + Math.sin(a) * r;
- 
-                // filament
-                ctx.strokeStyle = `rgba(220, 200, 80, ${bloom * 0.7})`;
-                ctx.lineWidth = 1.5 * adjustedScale;
-                ctx.beginPath();
-                ctx.moveTo(0, -maxPetalLen * 0.1);
-                ctx.lineTo(sx, sy);
-                ctx.stroke();
- 
-                // anther
-                ctx.fillStyle = `rgba(255, 235, 120, ${bloom})`;
-                ctx.beginPath();
-                ctx.arc(sx, sy, 2.5 * adjustedScale, 0, Math.PI * 2);
-                ctx.fill();
-            }
             ctx.restore();
         }
- 
-        // Draw front petals
-        for (const p of frontPetals) {
-            const flutter = this.noise.get(this.time * 1.4 + p.angle * 10, 4) * 0.03 * (1 + bloom);
-            const finalAngle = p.angle + flutter + windAngle * 0.05;
-            const len = maxPetalLen * p.lengthMul;
-            const wid = maxPetalLen * p.widthMul * (0.65 + bloom * 0.75);
- 
-            this.drawTulipPetal(ctx, finalAngle, len, wid, hue + p.hueOffset, sat, light + p.lightOffset, bloom);
+
+        const maxPetalLen = 62 * scale;
+        const rings = [
+            { count: 10, lenMul: 1.00, widMul: 0.40, startAt: 0.00, hueShift: -6, lightShift: -4, rot: 0 },
+            { count: 8,  lenMul: 0.76, widMul: 0.36, startAt: 0.18, hueShift: 4,  lightShift: 3,  rot: Math.PI / 8 },
+            { count: 6,  lenMul: 0.52, widMul: 0.32, startAt: 0.38, hueShift: 12, lightShift: 9,  rot: Math.PI / 6 },
+            { count: 5,  lenMul: 0.30, widMul: 0.30, startAt: 0.6,  hueShift: 20, lightShift: 15, rot: Math.PI / 5 },
+        ];
+
+        const baseHue = 342; // rose base, warmed toward gold in inner rings
+
+        for (const ring of rings) {
+            const ringBloom = Math.min(1, Math.max(0, (bloom - ring.startAt) / (1 - ring.startAt)));
+            if (ringBloom <= 0.001) continue;
+            const len = maxPetalLen * ring.lenMul * ringBloom;
+            const wid = len * (ring.widMul / ring.lenMul) * (0.55 + ringBloom * 0.6);
+
+            for (let i = 0; i < ring.count; i++) {
+                const baseAngle = (i / ring.count) * Math.PI * 2 + ring.rot;
+                const flutter = this.noise.get(this.time * 1.1 + baseAngle * 3, (i + ring.count) % 8) * 0.05;
+                const finalAngle = baseAngle + flutter + windAngle * 0.06;
+
+                this.drawPeonyPetal(
+                    ctx, finalAngle, len, wid,
+                    baseHue + ring.hueShift, 72, 58 + ring.lightShift,
+                    ringBloom
+                );
+            }
         }
- 
+
+        // Center stamens once mostly open
+        if (bloom > 0.45) {
+            const a = (bloom - 0.45) / 0.55;
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.fillStyle = 'rgba(232, 196, 104, 0.95)';
+            const count = 6;
+            for (let i = 0; i < count; i++) {
+                const ang = (i / count) * Math.PI * 2 + this.time * 0.4;
+                const r = 6 * scale;
+                ctx.beginPath();
+                ctx.arc(Math.cos(ang) * r, Math.sin(ang) * r, 2.2 * scale, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.beginPath();
+            ctx.arc(0, 0, 3.5 * scale, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(200, 220, 140, 0.9)';
+            ctx.fill();
+            ctx.restore();
+        }
+
         ctx.restore();
     }
- 
-    drawTulipPetal(ctx, angle, length, width, hue, sat, light, bloom) {
+
+    drawPeonyPetal(ctx, angle, length, width, hue, sat, light, alpha) {
         ctx.save();
         ctx.rotate(angle);
- 
-        // Gradient from base (darker/coral) to top (bright pink/yellow)
-        const grad = ctx.createLinearGradient(0, 0, 0, -length);
-        grad.addColorStop(0, `hsla(${hue + 25}, ${sat}%, ${light - 8}%, 0.9)`);
-        grad.addColorStop(0.4, `hsla(${hue}, ${sat}%, ${light}%, 0.85)`);
-        grad.addColorStop(0.85, `hsla(${hue - 10}, ${sat + 10}%, ${light + 10}%, 0.85)`);
-        grad.addColorStop(1, `hsla(${hue - 20}, ${sat + 15}%, ${light + 18}%, 0.95)`);
- 
+
+        const grad = ctx.createLinearGradient(0, 0, length, 0);
+        grad.addColorStop(0, `hsla(${hue + 12}, ${sat}%, ${light - 10}%, ${0.85 * alpha})`);
+        grad.addColorStop(0.5, `hsla(${hue}, ${sat}%, ${light}%, ${0.85 * alpha})`);
+        grad.addColorStop(1, `hsla(${hue - 8}, ${sat + 8}%, ${light + 14}%, ${0.9 * alpha})`);
+
         ctx.fillStyle = grad;
-        // Outer glow
-        ctx.shadowBlur = 12 + bloom * 18;
-        ctx.shadowColor = `hsla(${hue}, 100%, 65%, ${0.25 + bloom * 0.4})`;
- 
-        // Tulip petal shape pointing straight up (-Y direction)
+        ctx.shadowBlur = 10 + alpha * 12;
+        ctx.shadowColor = `hsla(${hue}, 90%, 70%, ${0.2 * alpha})`;
+
+        // Petal points outward from center (+X direction after rotation)
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.bezierCurveTo(
-            -width * 1.1, -length * 0.3,
-            -width * 0.9, -length * 0.85,
-            0, -length
-        );
-        ctx.bezierCurveTo(
-            width * 0.9, -length * 0.85,
-            width * 1.1, -length * 0.3,
-            0, 0
-        );
+        ctx.bezierCurveTo(length * 0.3, -width, length * 0.85, -width * 0.7, length, 0);
+        ctx.bezierCurveTo(length * 0.85, width * 0.7, length * 0.3, width, 0, 0);
         ctx.fill();
- 
-        // Subtle petal vein
+
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = `hsla(${hue + 15}, ${sat}%, ${light + 15}%, 0.25)`;
+        ctx.strokeStyle = `hsla(${hue + 10}, ${sat}%, ${light + 16}%, ${0.2 * alpha})`;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.lineTo(0, -length * 0.85);
+        ctx.lineTo(length * 0.82, 0);
         ctx.stroke();
- 
+
         ctx.restore();
     }
- 
-    // ----- Side Branches -----
+
     drawBranch(startX, startY, baseAngle, length, windAngle, scale) {
         const ctx = this.ctx;
         const segs = 12;
         const segL = length / segs;
         const pts = [{ x: startX, y: startY }];
- 
+
         for (let i = 1; i <= segs; i++) {
             const t = i / segs;
             const windBend = windAngle * t * t * 15;
-            const sway = this.noise.get(this.time * 0.8 + i * 0.3, 5) * 4 * t;
+            const sway = this.noise.get(this.time * 0.75 + i * 0.3, 5) * 4 * t;
             const angle = baseAngle + windBend * 0.02 + sway * 0.01;
- 
             pts.push({
                 x: pts[pts.length - 1].x + Math.cos(angle) * segL + windBend * 0.3,
-                y: pts[pts.length - 1].y + Math.sin(angle) * segL
+                y: pts[pts.length - 1].y + Math.sin(angle) * segL,
             });
         }
- 
-        // Draw the branch stem
+
         ctx.save();
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
- 
-        // Outer glow
         ctx.lineWidth = 4 * scale;
-        ctx.strokeStyle = 'rgba(40, 120, 35, 0.2)';
+        ctx.strokeStyle = 'rgba(127, 166, 107, 0.18)';
         ctx.shadowBlur = 6;
-        ctx.shadowColor = 'rgba(80, 180, 60, 0.25)';
+        ctx.shadowColor = 'rgba(127, 166, 107, 0.2)';
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
- 
-        // Core branch
-        ctx.lineWidth = 2.5 * scale;
-        ctx.strokeStyle = '#3a8a30';
+
+        ctx.lineWidth = 2.3 * scale;
+        ctx.strokeStyle = '#4d7a3f';
         ctx.shadowBlur = 0;
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
- 
         ctx.restore();
- 
-        // Draw a leaf on the branch
-        this.drawBranchLeaves(pts, scale);
- 
-        return pts[pts.length - 1]; // return branch tip
+
+        return pts[pts.length - 1];
     }
- 
-    drawBranchLeaves(branchPts, scale) {
-        const ctx = this.ctx;
-        if (branchPts.length < 5) return;
- 
-        // Leaf in the middle of the branch
-        const midIdx = Math.floor(branchPts.length * 0.5);
-        const pt = branchPts[midIdx];
-        const prevPt = branchPts[midIdx - 1];
-        if (!pt || !prevPt) return;
- 
-        const angle = Math.atan2(pt.y - prevPt.y, pt.x - prevPt.x) + Math.PI / 2;
-        const len = 12 * scale * (1 + this.growth);
- 
-        ctx.save();
-        ctx.translate(pt.x, pt.y);
-        ctx.rotate(angle);
- 
-        const grad = ctx.createLinearGradient(0, 0, len, 0);
-        grad.addColorStop(0, 'rgba(55, 140, 45, 0.8)');
-        grad.addColorStop(1, 'rgba(75, 170, 60, 0.4)');
-        ctx.fillStyle = grad;
- 
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(len * 0.5, -5, len, -1);
-        ctx.quadraticCurveTo(len * 0.5, 5, 0, 0);
-        ctx.fill();
- 
-        ctx.restore();
+
+    // =============================================================
+    // VINE RAIL — signature progress element
+    // =============================================================
+    updateVineRail(progress) {
+        const offset = this.vinePathLength * (1 - progress);
+        this.vineFillEl.style.strokeDashoffset = String(Math.max(0, offset));
     }
- 
-    // ----- HUD Overlay -----
-    drawHUD() {
-        const ctx = this.ctx;
-        const cw = this.canvas.width;
- 
-        ctx.save();
- 
-        // Counter-flip to undo the CSS scaleX(-1) so text is readable
-        ctx.translate(cw, 0);
-        ctx.scale(-1, 1);
- 
-        ctx.font = '600 15px Inter, sans-serif';
-        ctx.textAlign = 'left';
- 
-        // Position in screen-space top-right (which is canvas top-left after flip)
-        const px = 20;
-        const py = 22;
- 
-        // Background pill
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.beginPath();
-        ctx.roundRect(px - 10, py - 14, 138, 78, 10);
-        ctx.fill();
- 
-        // Bloom
-        ctx.fillStyle = 'rgba(255, 170, 200, 0.95)';
-        ctx.shadowBlur = 6;
-        ctx.shadowColor = 'rgba(255, 100, 150, 0.4)';
-        ctx.fillText(`Bloom: ${this.bloom.toFixed(2)}`, px, py + 6);
- 
-        // Growth
-        ctx.fillStyle = 'rgba(140, 255, 140, 0.95)';
-        ctx.shadowColor = 'rgba(80, 255, 80, 0.4)';
-        ctx.fillText(`Grow: ${this.growth.toFixed(2)}`, px, py + 28);
- 
-        // Wind
-        ctx.fillStyle = 'rgba(140, 200, 255, 0.95)';
-        ctx.shadowColor = 'rgba(80, 150, 255, 0.4)';
-        ctx.fillText(`Wind: ${this.windForce.toFixed(2)}`, px, py + 50);
- 
-        ctx.restore();
+
+    // =============================================================
+    // FULL-BLOOM REVEAL
+    // =============================================================
+    updateReveal(dt) {
+        const inFullBloom = this.bloom > 0.92 && this.growth > 0.85;
+        if (inFullBloom && !this.revealShown && !this.revealDismissed) {
+            this.fullBloomTimer += dt * 0.016;
+            if (this.fullBloomTimer > 1.6) {
+                this.revealEl.classList.remove('hidden');
+                this.revealShown = true;
+            }
+        } else if (!inFullBloom) {
+            this.fullBloomTimer = 0;
+            if (this.revealShown && (this.bloom < 0.6 || this.growth < 0.5)) {
+                this.revealShown = false;
+                this.revealDismissed = false;
+                this.revealEl.classList.add('hidden');
+            }
+        }
     }
- 
-    // ----- Post-process Glow -----
-    drawPostGlow(cx, cy) {
-        if (this.bloom < 0.05) return;
-        const ctx = this.ctx;
- 
-        ctx.save();
-        ctx.globalCompositeOperation = 'screen';
-        const r = 120 + this.bloom * 160;
-        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        g.addColorStop(0, `rgba(255, 110, 150, ${this.bloom * 0.18})`);
-        g.addColorStop(0.5, `rgba(255, 70, 110, ${this.bloom * 0.08})`);
-        g.addColorStop(1, 'rgba(255, 50, 80, 0)');
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+
+    // =============================================================
+    // SAVE SNAPSHOT
+    // =============================================================
+    saveSnapshot() {
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        const out = document.createElement('canvas');
+        out.width = w;
+        out.height = h;
+        const octx = out.getContext('2d');
+
+        // Both the video and the on-screen canvas are unmirrored pixel
+        // buffers (the mirroring is a CSS transform), so mirror both
+        // here identically to match what's actually seen on screen.
+        octx.save();
+        octx.translate(w, 0);
+        octx.scale(-1, 1);
+        octx.drawImage(this.video, 0, 0, w, h);
+        octx.drawImage(this.canvas, 0, 0, w, h);
+        octx.restore();
+
+        out.toBlob((blob) => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `bloom-${Date.now()}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }, 'image/png');
     }
- 
+
     // =============================================================
     // ANIMATION LOOP
     // =============================================================
     animate(timestamp) {
-        const dt = this.lastTimestamp ? (timestamp - this.lastTimestamp) / 16.67 : 1; // normalised to ~60fps
+        const dt = this.lastTimestamp ? (timestamp - this.lastTimestamp) / 16.67 : 1;
         this.lastTimestamp = timestamp;
         this.time += 0.016 * dt;
- 
+
         const ctx = this.ctx;
         const cw = this.canvas.width;
         const ch = this.canvas.height;
- 
-        // ---- Smooth interpolation ----
+
         const lerpSpeed = 0.07 * dt;
         this.bloom += (this.targetBloom - this.bloom) * lerpSpeed;
         this.growth += (this.targetGrowth - this.growth) * 0.05 * dt;
         this.windForce += (this.targetWindForce - this.windForce) * 0.06 * dt;
- 
-        // Natural wind always present
-        const naturalWind = this.noise.get(this.time * 0.7, 1) * 0.12;
+
+        const naturalWind = CONFIG.reducedMotion ? 0 : this.noise.get(this.time * 0.6, 1) * 0.1;
         const totalWind = naturalWind + this.windForce * 0.18;
- 
-        // ---- Clear ----
+
         ctx.clearRect(0, 0, cw, ch);
- 
-        // ---- Draw hand skeletons ----
-        for (let i = 0; i < this.handLandmarks.length; i++) {
-            const lm = this.handLandmarks[i];
-            const handedness = this.handHandedness[i];
-            this.drawHandSkeleton(lm, handedness);
-        }
- 
-        // ---- Particles ----
+
         for (const p of this.particles) {
             p.update(totalWind, dt);
             p.draw(ctx);
         }
- 
-        // ---- Main flower ----
+
         if (this.growth > 0.005) {
-            const stemBaseX = cw * 0.75;
+            const stemBaseX = cw * 0.72;
             const stemBaseY = ch * 0.95;
-            const stemH = ch * 0.45 * this.growth;
-            const flowerScale = 1.25 * this.growth;
- 
+            const stemH = ch * 0.44 * this.growth;
+            const flowerScale = 1.15 * this.growth;
+
             const stemData = this.drawStem(stemBaseX, stemBaseY, stemH, totalWind);
             const tip = stemData.tip;
             const pts = stemData.pts;
- 
-            // Draw 4 branches and their sub-flowers
+
             const branchConfigs = [
-                { heightRatio: 0.3,  direction: -1, lengthFactor: 0.16, scaleFactor: 0.42 },
-                { heightRatio: 0.45, direction: 1,  lengthFactor: 0.14, scaleFactor: 0.45 },
-                { heightRatio: 0.6,  direction: -1, lengthFactor: 0.12, scaleFactor: 0.48 },
-                { heightRatio: 0.75, direction: 1,  lengthFactor: 0.1,  scaleFactor: 0.4  }
+                { heightRatio: 0.32, direction: -1, lengthFactor: 0.15, scaleFactor: 0.4 },
+                { heightRatio: 0.48, direction: 1,  lengthFactor: 0.13, scaleFactor: 0.44 },
+                { heightRatio: 0.66, direction: -1, lengthFactor: 0.11, scaleFactor: 0.46 },
             ];
- 
+
             for (const config of branchConfigs) {
                 const idx = Math.floor(pts.length * config.heightRatio);
                 if (idx > 0 && idx < pts.length) {
                     const pt = pts[idx];
                     const prevPt = pts[idx - 1] || pt;
                     const tangent = Math.atan2(pt.y - prevPt.y, pt.x - prevPt.x);
- 
                     const branchAngle = tangent + (config.direction * 0.75);
                     const branchLength = ch * config.lengthFactor * this.growth;
- 
                     const branchTip = this.drawBranch(pt.x, pt.y, branchAngle, branchLength, totalWind, this.growth);
-                    const subFlowerScale = flowerScale * config.scaleFactor;
- 
-                    this.drawFlowerHead(branchTip.x, branchTip.y, this.bloom, totalWind, subFlowerScale);
-                    this.drawPostGlow(branchTip.x, branchTip.y);
+                    this.drawFlowerHead(branchTip.x, branchTip.y, this.bloom, totalWind, flowerScale * config.scaleFactor);
                 }
             }
- 
-            // Main flower head
+
             this.drawFlowerHead(tip.x, tip.y, this.bloom, totalWind, flowerScale);
- 
-            // ---- Post-process glow ----
-            this.drawPostGlow(tip.x, tip.y);
         }
- 
-        // ---- HUD ----
-        this.drawHUD();
- 
+
+        // Vine rail tracks overall journey (growth gets to the top,
+        // bloom fills in the color along the way)
+        const progress = Math.min(1, this.growth * 0.55 + this.bloom * 0.45);
+        this.updateVineRail(progress);
+
+        // Live stat readout
+        this.statBloomEl.textContent = `${Math.round(this.bloom * 100)}%`;
+        this.statGrowEl.textContent = `${Math.round(this.growth * 100)}%`;
+
+        // Sound + reveal
+        this.sound.onBloomUpdate(this.bloom);
+        this.updateReveal(dt);
+
         requestAnimationFrame((ts) => this.animate(ts));
     }
 }
- 
+
 // =============================================================
 // BOOT
 // =============================================================
 window.addEventListener('DOMContentLoaded', () => {
-    new FlowerBloomApp();
+    new GardenApp();
 });
- 
