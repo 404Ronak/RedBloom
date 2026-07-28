@@ -15,6 +15,21 @@ const CONFIG = {
     reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
 };
 
+// -------------------------------------------------------------
+// One entry = one full plant (stem + branches + flowers), each
+// with its own screen position, color (hue, 0-360), and size.
+// Add, remove, or edit entries to change how many plants grow
+// and what color each one is. hue reference: 0/360=red,
+// 30=orange, 50=gold, 140=green, 200=sky blue, 260=violet,
+// 300=magenta, 342=rose.
+// -------------------------------------------------------------
+const PLANTS = [
+    { xRatio: 0.78, hue: 342, sizeMult: 1.00, branchCount: 3 }, // rose
+    { xRatio: 0.55, hue: 40,  sizeMult: 0.88, branchCount: 2 }, // gold/peach
+    { xRatio: 0.92, hue: 265, sizeMult: 0.82, branchCount: 2 }, // violet
+    { xRatio: 0.34, hue: 200, sizeMult: 0.78, branchCount: 2 }, // sky blue
+];
+
 // =============================================================
 // NOISE — Organic movement via layered sine waves
 // =============================================================
@@ -443,18 +458,18 @@ class GardenApp {
      * full circle (rather than a single upward tulip shape), with
      * outer rings opening before inner ones for a layered bloom.
      */
-    drawFlowerHead(cx, cy, bloom, windAngle, scale) {
+    drawFlowerHead(cx, cy, bloom, windAngle, scale, hue = 342) {
         const ctx = this.ctx;
         ctx.save();
         ctx.translate(cx, cy);
 
-        // Ambient glow
+        // Ambient glow (tinted to this plant's hue)
         const glowR = (55 + bloom * 130) * scale;
         if (bloom > 0.02) {
             const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
-            glow.addColorStop(0, `rgba(232, 160, 180, ${0.35 * bloom})`);
-            glow.addColorStop(0.55, `rgba(232, 196, 104, ${0.14 * bloom})`);
-            glow.addColorStop(1, 'rgba(232, 160, 180, 0)');
+            glow.addColorStop(0, `hsla(${hue}, 75%, 68%, ${0.35 * bloom})`);
+            glow.addColorStop(0.55, `hsla(${hue + 40}, 80%, 62%, ${0.14 * bloom})`);
+            glow.addColorStop(1, `hsla(${hue}, 75%, 68%, 0)`);
             ctx.fillStyle = glow;
             ctx.beginPath();
             ctx.arc(0, 0, glowR, 0, Math.PI * 2);
@@ -468,8 +483,8 @@ class GardenApp {
             ctx.save();
             ctx.globalAlpha = budAlpha;
             const bg = ctx.createRadialGradient(0, -budR * 0.3, 0, 0, 0, budR);
-            bg.addColorStop(0, 'rgba(200, 130, 150, 0.9)');
-            bg.addColorStop(1, 'rgba(120, 70, 90, 0.9)');
+            bg.addColorStop(0, `hsla(${hue}, 45%, 55%, 0.9)`);
+            bg.addColorStop(1, `hsla(${hue}, 40%, 32%, 0.9)`);
             ctx.fillStyle = bg;
             ctx.beginPath();
             ctx.ellipse(0, 0, budR * 0.75, budR, 0, 0, Math.PI * 2);
@@ -477,7 +492,7 @@ class GardenApp {
             ctx.restore();
         }
 
-        const maxPetalLen = 62 * scale;
+        const maxPetalLen = 78 * scale;
         const rings = [
             { count: 10, lenMul: 1.00, widMul: 0.40, startAt: 0.00, hueShift: -6, lightShift: -4, rot: 0 },
             { count: 8,  lenMul: 0.76, widMul: 0.36, startAt: 0.18, hueShift: 4,  lightShift: 3,  rot: Math.PI / 8 },
@@ -485,7 +500,7 @@ class GardenApp {
             { count: 5,  lenMul: 0.30, widMul: 0.30, startAt: 0.6,  hueShift: 20, lightShift: 15, rot: Math.PI / 5 },
         ];
 
-        const baseHue = 342; // rose base, warmed toward gold in inner rings
+        const baseHue = hue; // this plant's color, warmed/cooled slightly ring to ring
 
         for (const ring of rings) {
             const ringBloom = Math.min(1, Math.max(0, (bloom - ring.startAt) / (1 - ring.startAt)));
@@ -602,6 +617,25 @@ class GardenApp {
         return pts[pts.length - 1];
     }
 
+    /**
+     * Auto-generates evenly spaced side-branch positions for a stem,
+     * alternating left/right, tapering size toward the top. Used so
+     * each PLANTS entry only needs a branchCount, not manual coords.
+     */
+    getBranchLayout(count) {
+        const layout = [];
+        for (let i = 0; i < count; i++) {
+            const t = count === 1 ? 0.5 : i / (count - 1);
+            layout.push({
+                heightRatio: 0.24 + t * 0.56,
+                direction: i % 2 === 0 ? -1 : 1,
+                lengthFactor: 0.16 - t * 0.05,
+                scaleFactor: 0.46 - t * 0.08,
+            });
+        }
+        return layout;
+    }
+
     // =============================================================
     // VINE RAIL — signature progress element
     // =============================================================
@@ -692,35 +726,32 @@ class GardenApp {
         }
 
         if (this.growth > 0.005) {
-            const stemBaseX = cw * 0.72;
-            const stemBaseY = ch * 0.95;
-            const stemH = ch * 0.44 * this.growth;
-            const flowerScale = 1.15 * this.growth;
+            for (const plant of PLANTS) {
+                const stemBaseX = cw * plant.xRatio;
+                const stemBaseY = ch * 0.95;
+                const stemH = ch * 0.44 * this.growth * plant.sizeMult;
+                const flowerScale = 1.55 * this.growth * plant.sizeMult;
 
-            const stemData = this.drawStem(stemBaseX, stemBaseY, stemH, totalWind);
-            const tip = stemData.tip;
-            const pts = stemData.pts;
+                const stemData = this.drawStem(stemBaseX, stemBaseY, stemH, totalWind);
+                const tip = stemData.tip;
+                const pts = stemData.pts;
 
-            const branchConfigs = [
-                { heightRatio: 0.32, direction: -1, lengthFactor: 0.15, scaleFactor: 0.4 },
-                { heightRatio: 0.48, direction: 1,  lengthFactor: 0.13, scaleFactor: 0.44 },
-                { heightRatio: 0.66, direction: -1, lengthFactor: 0.11, scaleFactor: 0.46 },
-            ];
-
-            for (const config of branchConfigs) {
-                const idx = Math.floor(pts.length * config.heightRatio);
-                if (idx > 0 && idx < pts.length) {
-                    const pt = pts[idx];
-                    const prevPt = pts[idx - 1] || pt;
-                    const tangent = Math.atan2(pt.y - prevPt.y, pt.x - prevPt.x);
-                    const branchAngle = tangent + (config.direction * 0.75);
-                    const branchLength = ch * config.lengthFactor * this.growth;
-                    const branchTip = this.drawBranch(pt.x, pt.y, branchAngle, branchLength, totalWind, this.growth);
-                    this.drawFlowerHead(branchTip.x, branchTip.y, this.bloom, totalWind, flowerScale * config.scaleFactor);
+                const branchConfigs = this.getBranchLayout(plant.branchCount);
+                for (const config of branchConfigs) {
+                    const idx = Math.floor(pts.length * config.heightRatio);
+                    if (idx > 0 && idx < pts.length) {
+                        const pt = pts[idx];
+                        const prevPt = pts[idx - 1] || pt;
+                        const tangent = Math.atan2(pt.y - prevPt.y, pt.x - prevPt.x);
+                        const branchAngle = tangent + (config.direction * 0.75);
+                        const branchLength = ch * config.lengthFactor * this.growth * plant.sizeMult;
+                        const branchTip = this.drawBranch(pt.x, pt.y, branchAngle, branchLength, totalWind, this.growth);
+                        this.drawFlowerHead(branchTip.x, branchTip.y, this.bloom, totalWind, flowerScale * config.scaleFactor, plant.hue);
+                    }
                 }
-            }
 
-            this.drawFlowerHead(tip.x, tip.y, this.bloom, totalWind, flowerScale);
+                this.drawFlowerHead(tip.x, tip.y, this.bloom, totalWind, flowerScale, plant.hue);
+            }
         }
 
         // Vine rail tracks overall journey (growth gets to the top,
