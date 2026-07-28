@@ -3,32 +3,91 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Control a blooming flower with hand gestures in real-time using your webcam">
-    <title>Flower Bloom — Hand Gesture Control</title>
+    <meta name="description" content="A flower that grows and blooms as you move your hands.">
+    <title>Grown For You</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;1,9..144,500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
+    <div class="stage">
+ 
         <!-- Webcam feed -->
         <video id="webcam" autoplay playsinline muted></video>
-        <!-- Canvas overlay for rendering flower + hand skeleton -->
+        <!-- Canvas overlay: flower, particles, vine rail -->
         <canvas id="canvas"></canvas>
-        <!-- Subtle vignette -->
+        <!-- Warm vignette -->
         <div class="vignette"></div>
-        <!-- Loading screen -->
-        <div class="loading-overlay" id="loading">
-            <div class="loading-flower"></div>
-            <div class="loading-text">Initializing Hand Tracking</div>
-            <div class="loading-subtext">Please allow camera access</div>
+ 
+        <!-- ============ ONBOARDING ============ -->
+        <div class="veil" id="veil">
+            <div class="veil-card">
+                <p class="eyebrow">a small garden, for you</p>
+                <h1>Something's ready to grow.</h1>
+                <p class="veil-copy">
+                    Hold your hands up to the camera. Your left hand opens the
+                    petals, your right hand grows the stem. Move slowly —
+                    it listens closely.
+                </p>
+                <button class="btn-primary" id="begin-btn">Begin</button>
+                <p class="veil-hint" id="veil-hint">We only ask for your camera — nothing is recorded or sent anywhere.</p>
+            </div>
         </div>
-        <!-- Instructions -->
-        <div class="instructions" id="instructions">
-            <span>Left hand pinch closed</span> makes it Bloom &nbsp;·&nbsp;
-            <span>Right hand pinch closed</span> makes it Grow &nbsp;·&nbsp;
-            <span>Sway hands</span> to create wind
+ 
+        <!-- ============ LOADING (after Begin is pressed) ============ -->
+        <div class="loading-overlay hidden" id="loading">
+            <div class="loading-bud"></div>
+            <div class="loading-text">Waking up the garden</div>
         </div>
+ 
+        <!-- ============ VINE PROGRESS RAIL (signature element) ============ -->
+        <svg class="vine-rail hidden" id="vine-rail" viewBox="0 0 60 600" preserveAspectRatio="none" aria-hidden="true">
+            <path id="vine-track" d="M 30 600 C 10 450, 50 350, 30 200 C 15 100, 45 60, 30 0"
+                  fill="none" stroke="rgba(245,236,224,0.08)" stroke-width="3" stroke-linecap="round"/>
+            <path id="vine-fill" d="M 30 600 C 10 450, 50 350, 30 200 C 15 100, 45 60, 30 0"
+                  fill="none" stroke="url(#vineGradient)" stroke-width="3" stroke-linecap="round"
+                  stroke-dasharray="900" stroke-dashoffset="900"/>
+            <defs>
+                <linearGradient id="vineGradient" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stop-color="#7fa66b"/>
+                    <stop offset="60%" stop-color="#e8a0b4"/>
+                    <stop offset="100%" stop-color="#e8c468"/>
+                </linearGradient>
+            </defs>
+        </svg>
+ 
+        <!-- ============ CONTROLS (bottom-left) ============ -->
+        <div class="controls hidden" id="controls">
+            <button class="icon-btn" id="sound-toggle" title="Toggle sound" aria-pressed="true">
+                <span id="sound-icon">♪</span>
+            </button>
+            <div class="stat-readout" id="stat-readout">
+                <span><i class="dot dot-rose"></i>bloom <b id="stat-bloom">0%</b></span>
+                <span><i class="dot dot-sage"></i>grow <b id="stat-grow">0%</b></span>
+            </div>
+        </div>
+ 
+        <!-- ============ HAND HINT LABELS (small, unmirrored) ============ -->
+        <div class="hand-hint hand-hint--left hidden" id="hint-left">left hand · bloom</div>
+        <div class="hand-hint hand-hint--right hidden" id="hint-right">right hand · grow</div>
+ 
+        <!-- ============ FULL BLOOM REVEAL ============ -->
+        <div class="reveal hidden" id="reveal">
+            <div class="reveal-card">
+                <p class="eyebrow">in full bloom</p>
+                <p class="reveal-note" id="reveal-note">
+                    Every flower here grew because of you. Same goes for us.
+                </p>
+                <div class="reveal-actions">
+                    <button class="btn-secondary" id="save-btn">Save this moment</button>
+                    <button class="btn-ghost" id="close-reveal-btn">Keep growing</button>
+                </div>
+            </div>
+        </div>
+ 
     </div>
-
+ 
     <!-- MediaPipe Hands -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
@@ -36,3 +95,4 @@
     <script src="app.js"></script>
 </body>
 </html>
+ 
