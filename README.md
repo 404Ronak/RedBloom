@@ -57,6 +57,32 @@ const CONFIG = {
 Change `loveNote` to whatever you want the full-bloom message to say —
 that's the only line you need to touch.
 
+### Adding, removing, or recoloring plants
+
+Just below `CONFIG` is a `PLANTS` array — one entry per plant:
+
+```javascript
+const PLANTS = [
+    { xRatio: 0.78, hue: 342, sizeMult: 1.00, branchCount: 3 }, // rose
+    { xRatio: 0.55, hue: 40,  sizeMult: 0.88, branchCount: 2 }, // gold/peach
+    { xRatio: 0.92, hue: 265, sizeMult: 0.82, branchCount: 2 }, // violet
+    { xRatio: 0.34, hue: 200, sizeMult: 0.78, branchCount: 2 }, // sky blue
+];
+```
+
+- `xRatio` — horizontal position, 0 (left edge) to 1 (right edge).
+- `hue` — the plant's color, 0–360 on the color wheel (0/360 red,
+  30 orange, 50 gold, 140 green, 200 sky blue, 260 violet, 300 magenta,
+  342 rose).
+- `sizeMult` — scales that plant's stem and flowers up or down
+  relative to the base size (1.0 = normal).
+- `branchCount` — how many side-flowers that plant grows, on top of
+  its one main flower.
+
+To add a 5th plant, just add another object to the array. To make a
+plant bigger, raise its `sizeMult`. All plants bloom and grow together,
+driven by the same two hands — only their color, position, and size differ.
+
 ## Running it locally
 
 Browsers block camera access on plain `file://` pages, so serve the
