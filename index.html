@@ -2,8 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="description" content="A flower that grows and blooms as you move your hands.">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Grown For You</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -32,6 +35,7 @@
                 </p>
                 <button class="btn-primary" id="begin-btn">Begin</button>
                 <p class="veil-hint" id="veil-hint">We only ask for your camera — nothing is recorded or sent anywhere.</p>
+                <p class="veil-hint" id="veil-fallback-hint">No camera, or hands not tracking well? <button class="link-btn" id="use-sliders-btn" type="button">Use touch controls instead</button></p>
             </div>
         </div>
  
@@ -71,6 +75,18 @@
         <!-- ============ HAND HINT LABELS (small, unmirrored) ============ -->
         <div class="hand-hint hand-hint--left hidden" id="hint-left">left hand · bloom</div>
         <div class="hand-hint hand-hint--right hidden" id="hint-right">right hand · grow</div>
+
+        <!-- ============ MOBILE TOUCH FALLBACK SLIDERS ============ -->
+        <div class="touch-controls hidden" id="touch-controls">
+            <label class="touch-slider-wrap">
+                <span class="touch-slider-label">bloom</span>
+                <input type="range" id="bloom-slider" min="0" max="100" value="0" class="touch-slider touch-slider--rose">
+            </label>
+            <label class="touch-slider-wrap">
+                <span class="touch-slider-label">grow</span>
+                <input type="range" id="growth-slider" min="0" max="100" value="0" class="touch-slider touch-slider--sage">
+            </label>
+        </div>
  
         <!-- ============ FULL BLOOM REVEAL ============ -->
         <div class="reveal hidden" id="reveal">
@@ -95,4 +111,3 @@
     <script src="app.js"></script>
 </body>
 </html>
- 
