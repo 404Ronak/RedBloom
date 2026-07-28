@@ -16,6 +16,29 @@ const CONFIG = {
 };
 
 // -------------------------------------------------------------
+// Mobile detection — used to scale camera resolution and
+// MediaPipe model complexity down so phones don't choke.
+// -------------------------------------------------------------
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) || window.innerWidth < 768;
+
+// -------------------------------------------------------------
+// Fix for mobile viewport height: 100vh on phones includes the
+// area the browser chrome (address bar) can cover, which causes
+// visible layout jumps as it shows/hides. We measure the real
+// visible height with JS and expose it as --app-height instead.
+// -------------------------------------------------------------
+function setAppHeight() {
+    const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', `${h}px`);
+}
+setAppHeight();
+window.addEventListener('resize', setAppHeight);
+window.addEventListener('orientationchange', () => setTimeout(setAppHeight, 100));
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', setAppHeight);
+}
+
+// -------------------------------------------------------------
 // One entry = one full plant (stem + branches + flowers), each
 // with its own screen position, color (hue, 0-360), and size.
 // Add, remove, or edit entries to change how many plants grow
@@ -179,6 +202,10 @@ class GardenApp {
         this.revealNoteEl = document.getElementById('reveal-note');
         this.saveBtn = document.getElementById('save-btn');
         this.closeRevealBtn = document.getElementById('close-reveal-btn');
+        this.useSlidersBtn = document.getElementById('use-sliders-btn');
+        this.touchControlsEl = document.getElementById('touch-controls');
+        this.bloomSlider = document.getElementById('bloom-slider');
+        this.growthSlider = document.getElementById('growth-slider');
 
         this.revealNoteEl.textContent = CONFIG.loveNote;
 
@@ -189,6 +216,10 @@ class GardenApp {
         // Time
         this.time = 0;
         this.lastTimestamp = 0;
+
+        // Whether we're driving bloom/growth from touch sliders
+        // instead of the camera + hand tracking.
+        this.usingTouchControls = false;
 
         // Gesture state (smoothed)
         this.bloom = 0;
@@ -211,7 +242,7 @@ class GardenApp {
 
         // Particles
         this.particles = [];
-        this.particleCount = CONFIG.reducedMotion ? 24 : 55;
+        this.particleCount = CONFIG.reducedMotion ? 24 : (IS_MOBILE ? 30 : 55);
 
         // Full-bloom reveal tracking
         this.fullBloomTimer = 0;
@@ -244,6 +275,23 @@ class GardenApp {
             this.revealEl.classList.add('hidden');
             this.revealDismissed = true;
         });
+
+        // Touch-control fallback: for phones without a usable camera,
+        // or when hand tracking is too unreliable at arm's length on
+        // a small screen. Sliders drive bloom/growth directly.
+        if (this.useSlidersBtn) {
+            this.useSlidersBtn.addEventListener('click', () => this.beginWithTouchControls());
+        }
+        if (this.bloomSlider) {
+            this.bloomSlider.addEventListener('input', (e) => {
+                this.targetBloom = Number(e.target.value) / 100;
+            });
+        }
+        if (this.growthSlider) {
+            this.growthSlider.addEventListener('input', (e) => {
+                this.targetGrowth = Number(e.target.value) / 100;
+            });
+        }
     }
 
     // Camera + audio permission are requested from this direct click,
@@ -257,12 +305,26 @@ class GardenApp {
         requestAnimationFrame((ts) => this.animate(ts));
     }
 
+    // Skips the camera entirely and drives the flower from the two
+    // on-screen sliders. Used as a manual fallback on phones.
+    beginWithTouchControls() {
+        this.usingTouchControls = true;
+        this.sound.ensureContext();
+        this.veilEl.classList.add('hidden');
+        this.touchControlsEl.classList.remove('hidden');
+        this.controlsEl.classList.remove('hidden');
+        requestAnimationFrame((ts) => this.animate(ts));
+    }
+
     // ---------------------------------------------------------
     // Setup
     // ---------------------------------------------------------
     resize() {
+        // Match the CSS --app-height fix: use visualViewport height
+        // where available so the canvas doesn't fall out of sync with
+        // the actual visible area as mobile browser chrome resizes.
         this.canvas.width = window.innerWidth;
-        this.canvas.height = window.innerHeight;
+        this.canvas.height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
         for (const p of this.particles) {
             p.cw = this.canvas.width;
             p.ch = this.canvas.height;
@@ -280,9 +342,13 @@ class GardenApp {
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`,
         });
 
+        // Mobile phones have far less spare CPU than a laptop. Model
+        // complexity 1 + two-hand tracking + a 720p feed is enough to
+        // make a mid-range phone drop frames badly, so we scale both
+        // the model and the camera resolution down on mobile.
         hands.setOptions({
             maxNumHands: 2,
-            modelComplexity: 1,
+            modelComplexity: IS_MOBILE ? 0 : 1,
             minDetectionConfidence: 0.65,
             minTrackingConfidence: 0.5,
         });
@@ -291,9 +357,23 @@ class GardenApp {
 
         const cam = new Camera(this.video, {
             onFrame: async () => { await hands.send({ image: this.video }); },
-            width: 1280,
-            height: 720,
+            width: IS_MOBILE ? 480 : 1280,
+            height: IS_MOBILE ? 640 : 720,
+            // Explicitly request the front (selfie) camera. Without
+            // this, some Android browsers default to the rear camera,
+            // which makes gesture control impossible to use.
+            facingMode: 'user',
         });
+
+        // Camera permission requires a secure context (HTTPS or
+        // localhost). If the page is served over plain HTTP on a
+        // phone, getUserMedia will reject before this even runs.
+        if (!window.isSecureContext) {
+            this.loadingEl.innerHTML =
+                '<div class="loading-text">This page needs to be loaded over HTTPS for the camera to work.</div>';
+            this.offerTouchFallback();
+            return;
+        }
 
         cam.start().then(() => {
             this.loadingEl.classList.add('hidden');
@@ -302,8 +382,20 @@ class GardenApp {
         }).catch((err) => {
             console.error('Camera failed to start:', err);
             this.loadingEl.innerHTML =
-                '<div class="loading-text">Camera access was blocked.<br>Allow it in your browser\'s address bar, then reload.</div>';
+                '<div class="loading-text">Camera access was blocked or unavailable.</div>';
+            this.offerTouchFallback();
         });
+    }
+
+    // Shown when the camera can't be used at all — swaps in the
+    // touch sliders so the experience still works.
+    offerTouchFallback() {
+        setTimeout(() => {
+            this.loadingEl.classList.add('hidden');
+            this.usingTouchControls = true;
+            this.touchControlsEl.classList.remove('hidden');
+            this.controlsEl.classList.remove('hidden');
+        }, 1800);
     }
 
     // ---------------------------------------------------------
@@ -679,10 +771,13 @@ class GardenApp {
         // Both the video and the on-screen canvas are unmirrored pixel
         // buffers (the mirroring is a CSS transform), so mirror both
         // here identically to match what's actually seen on screen.
+        // When using touch controls there's no video feed to draw.
         octx.save();
         octx.translate(w, 0);
         octx.scale(-1, 1);
-        octx.drawImage(this.video, 0, 0, w, h);
+        if (!this.usingTouchControls && this.video.readyState >= 2) {
+            octx.drawImage(this.video, 0, 0, w, h);
+        }
         octx.drawImage(this.canvas, 0, 0, w, h);
         octx.restore();
 
